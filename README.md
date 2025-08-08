@@ -1,3 +1,0 @@
-﻿# BoraMercado
-
-A real-time shared shopping list app designed for couples, friends, or families. Add, update, and check off items instantly while you shop together, whether you’re in the same store or miles apart. Simple, fast, and always in sync.
