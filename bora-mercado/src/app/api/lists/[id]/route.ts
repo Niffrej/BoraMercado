@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { connectToDatabase } from "@/lib/mongodb";
+import ShoppingListModel from "@/models/ShoppingList";
 
 // GET - Buscar lista específica
 export async function GET(
@@ -9,25 +9,33 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const docRef = doc(db, "shoppingLists", id);
-    const docSnap = await getDoc(docRef);
-
-    if (!docSnap.exists()) {
+    await connectToDatabase();
+    type Doc = {
+      _id: { toString: () => string };
+      name: string;
+      startDate?: Date;
+      endDate?: Date | null;
+      items?: unknown[];
+      totalValue?: number;
+      isActive?: boolean;
+    } | null;
+    const doc = (await ShoppingListModel.findById(id).lean()) as Doc;
+    if (!doc) {
       return NextResponse.json(
         { error: "Lista não encontrada" },
         { status: 404 }
       );
     }
 
-    const data = docSnap.data();
-    const list = {
-      id: docSnap.id,
-      ...data,
-      startDate: data.startDate?.toDate(),
-      endDate: data.endDate?.toDate()
-    };
-
-    return NextResponse.json(list);
+    return NextResponse.json({
+      id: doc._id.toString(),
+      name: doc.name,
+      startDate: doc.startDate,
+      endDate: doc.endDate ?? null,
+      items: doc.items ?? [],
+      totalValue: doc.totalValue ?? 0,
+      isActive: doc.isActive ?? true
+    });
   } catch (error) {
     console.error("Erro ao buscar lista:", error);
     return NextResponse.json(
@@ -46,14 +54,15 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
     const { name, items, endDate, totalValue, isActive } = body;
-
-    const docRef = doc(db, "shoppingLists", id);
-    await updateDoc(docRef, {
-      name,
-      items,
-      endDate: endDate ? new Date(endDate) : null,
-      totalValue,
-      isActive,
+    await connectToDatabase();
+    await ShoppingListModel.findByIdAndUpdate(id, {
+      ...(name !== undefined ? { name } : {}),
+      ...(items !== undefined ? { items } : {}),
+      ...(endDate !== undefined
+        ? { endDate: endDate ? new Date(endDate) : null }
+        : {}),
+      ...(totalValue !== undefined ? { totalValue } : {}),
+      ...(isActive !== undefined ? { isActive } : {}),
       updatedAt: new Date()
     });
 
@@ -74,8 +83,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const docRef = doc(db, "shoppingLists", id);
-    await deleteDoc(docRef);
+    await connectToDatabase();
+    await ShoppingListModel.findByIdAndDelete(id);
 
     return NextResponse.json({ message: "Lista deletada com sucesso" });
   } catch (error) {

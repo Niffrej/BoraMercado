@@ -17,6 +17,11 @@ import Loading from "@/components/ui/loading";
 import ListNameModal from "@/components/ui/list-name-modal";
 import DeleteConfirmationModal from "@/components/ui/delete-confirmation-modal";
 import { ShoppingList } from "@/types";
+import {
+  fetchShoppingLists,
+  createShoppingList,
+  deleteShoppingList as apiDeleteShoppingList
+} from "@/services/api";
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
@@ -31,14 +36,15 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    // Simular loading e carregar listas anteriores
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-      // Aqui você carregará as listas do Firebase
-      loadPreviousLists();
-    }, 2000);
-
-    return () => clearTimeout(timer);
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        await loadPreviousLists();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    load();
   }, []);
 
   // Fechar menu ao clicar fora
@@ -54,53 +60,9 @@ export default function Home() {
   }, [activeMenu]);
 
   const loadPreviousLists = async () => {
-    // TODO: Implementar carregamento do Firebase
-    // Por enquanto, dados mockados
-    const mockLists: ShoppingList[] = [
-      // Listas abertas (não finalizadas)
-      {
-        id: "open-1",
-        name: "Churrasco do Final de Semana",
-        startDate: new Date("2024-01-20"),
-        endDate: undefined,
-        items: [],
-        totalValue: 45.0,
-        isActive: true
-      },
-      {
-        id: "open-2",
-        name: "Compras do Mês",
-        startDate: new Date("2024-01-18"),
-        endDate: undefined,
-        items: [],
-        totalValue: 78.5,
-        isActive: true
-      },
-      // Listas concluídas
-      {
-        id: "completed-1",
-        name: "Compras do Supermercado",
-        startDate: new Date("2024-01-15"),
-        endDate: new Date("2024-01-15"),
-        items: [],
-        totalValue: 125.5,
-        isActive: false
-      },
-      {
-        id: "completed-2",
-        name: "Lista da Feira",
-        startDate: new Date("2024-01-10"),
-        endDate: new Date("2024-01-10"),
-        items: [],
-        totalValue: 89.3,
-        isActive: false
-      }
-    ];
-
-    // Separar listas abertas das concluídas
-    const open = mockLists.filter((list) => list.isActive);
-    const completed = mockLists.filter((list) => !list.isActive);
-
+    const lists = await fetchShoppingLists();
+    const open = lists.filter((list) => list.isActive);
+    const completed = lists.filter((list) => !list.isActive);
     setOpenLists(open);
     setCompletedLists(completed);
   };
@@ -109,22 +71,29 @@ export default function Home() {
     setShowNameModal(true);
   };
 
-  const handleSaveListName = (name: string) => {
-    // Passar o nome da lista via query params ou localStorage
-    localStorage.setItem("newListName", name);
-    router.push("/lista");
+  const handleSaveListName = async (name: string) => {
+    try {
+      setShowNameModal(false);
+      const { id } = await createShoppingList({
+        name,
+        items: [],
+        startDate: new Date(),
+        endDate: undefined,
+        totalValue: 0,
+        isActive: true
+      } as unknown as Omit<ShoppingList, "id">);
+      router.push(`/lista?id=${id}`);
+    } catch (e) {
+      alert("Falha ao criar lista. Tente novamente.");
+    }
   };
 
   const continueList = (listId: string) => {
-    // Passar o ID da lista para continuar
-    localStorage.setItem("continueListId", listId);
-    router.push("/lista");
+    router.push(`/lista?id=${listId}`);
   };
 
   const editList = (listId: string) => {
-    // Passar o ID da lista para editar (mesmo para finalizadas)
-    localStorage.setItem("continueListId", listId);
-    router.push("/lista");
+    router.push(`/lista?id=${listId}`);
   };
 
   const deleteList = (list: ShoppingList) => {
@@ -133,18 +102,24 @@ export default function Home() {
     setActiveMenu(null);
   };
 
-  const confirmDeleteList = () => {
+  const confirmDeleteList = async () => {
     if (listToDelete) {
-      // TODO: Implementar exclusão real no Firebase
-      if (listToDelete.isActive) {
-        setOpenLists(openLists.filter((list) => list.id !== listToDelete.id));
-      } else {
-        setCompletedLists(
-          completedLists.filter((list) => list.id !== listToDelete.id)
-        );
+      try {
+        await apiDeleteShoppingList(listToDelete.id);
+        if (listToDelete.isActive) {
+          setOpenLists((prev) => prev.filter((l) => l.id !== listToDelete.id));
+        } else {
+          setCompletedLists((prev) =>
+            prev.filter((l) => l.id !== listToDelete.id)
+          );
+        }
+        alert(`Lista "${listToDelete.name}" excluída com sucesso!`);
+      } catch (e) {
+        alert("Falha ao excluir a lista. Tente novamente.");
+      } finally {
+        setListToDelete(null);
+        setShowDeleteModal(false);
       }
-      setListToDelete(null);
-      alert(`Lista "${listToDelete.name}" excluída com sucesso!`);
     }
   };
 

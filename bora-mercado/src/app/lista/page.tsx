@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import {
   ArrowLeft,
   Plus,
@@ -13,15 +13,25 @@ import {
   Filter,
   X
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ShoppingItem } from "@/types";
+import { ShoppingItem, ShoppingList } from "@/types";
 import CategorySelector from "@/components/ui/category-selector";
 import { categories, getCategoryById } from "@/lib/categories";
+import Loading from "@/components/ui/loading";
+import {
+  fetchShoppingList,
+  updateShoppingList,
+  deleteShoppingList
+} from "@/services/api";
 
-export default function ShoppingListPage() {
+export const dynamic = "force-dynamic";
+
+function ShoppingListInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const listId = searchParams.get("id");
   const [listName, setListName] = useState("");
   const [editingListName, setEditingListName] = useState(false);
   const [items, setItems] = useState<ShoppingItem[]>([]);
@@ -34,82 +44,28 @@ export default function ShoppingListPage() {
   const [editUnitValue, setEditUnitValue] = useState("");
   const [editQuantity, setEditQuantity] = useState("");
   const [editCategory, setEditCategory] = useState("");
-  const [startDate] = useState(new Date());
+  const [startDate, setStartDate] = useState(new Date());
   const [showAddForm, setShowAddForm] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [showCategoryFilter, setShowCategoryFilter] = useState(false);
 
-  // Carregar dados da lista (nova ou existente)
+  // Carregar dados da lista do Firestore
   useEffect(() => {
-    const savedListName = localStorage.getItem("newListName");
-    const continueListId = localStorage.getItem("continueListId");
-
-    if (continueListId) {
-      // Carregar lista existente
-      loadExistingList(continueListId);
-      localStorage.removeItem("continueListId");
-    } else if (savedListName) {
-      // Nova lista com nome
-      setListName(savedListName);
-      localStorage.removeItem("newListName");
-    }
-  }, []);
-
-  const loadExistingList = async (listId: string) => {
-    // TODO: Implementar carregamento real do Firebase
-    // Por enquanto, dados mockados
-    const mockExistingLists = {
-      "open-1": {
-        name: "Churrasco do Final de Semana",
-        items: [
-          {
-            id: "1",
-            name: "Carne Bovina",
-            categoryId: "carnes-aves-peixes",
-            unitValue: 35.0,
-            quantity: 2,
-            value: 70.0,
-            checked: false,
-            createdAt: new Date()
-          },
-          {
-            id: "2",
-            name: "Carvão",
-            categoryId: "outros",
-            unitValue: 8.0,
-            quantity: 1,
-            value: 8.0,
-            checked: true,
-            createdAt: new Date()
-          }
-        ],
-        startDate: new Date("2024-01-20")
-      },
-      "open-2": {
-        name: "Compras do Mês",
-        items: [
-          {
-            id: "3",
-            name: "Arroz",
-            categoryId: "graos-cereais",
-            unitValue: 4.5,
-            quantity: 2,
-            value: 9.0,
-            checked: false,
-            createdAt: new Date()
-          }
-        ],
-        startDate: new Date("2024-01-18")
+    const load = async () => {
+      if (!listId) return;
+      try {
+        const list: ShoppingList = await fetchShoppingList(listId);
+        setListName(list.name);
+        setItems(list.items || []);
+        if (list.startDate) setStartDate(new Date(list.startDate));
+      } catch (e) {
+        alert("Não foi possível carregar a lista.");
+        router.push("/");
       }
     };
-
-    const existingList =
-      mockExistingLists[listId as keyof typeof mockExistingLists];
-    if (existingList) {
-      setListName(existingList.name);
-      setItems(existingList.items);
-    }
-  };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listId]);
 
   // Filtrar itens por categoria
   const filteredItems = categoryFilter
@@ -130,7 +86,7 @@ export default function ShoppingListPage() {
     return acc;
   }, {} as Record<string, number>);
 
-  const addItem = () => {
+  const addItem = async () => {
     if (newItemName.trim() && newItemCategory) {
       const unitValue = parseFloat(newItemUnitValue) || 0;
       const quantity = parseInt(newItemQuantity) || 1;
@@ -146,25 +102,49 @@ export default function ShoppingListPage() {
         checked: false,
         createdAt: new Date()
       };
-      setItems([...items, newItem]);
+      const nextItems = [...items, newItem];
+      setItems(nextItems);
       setNewItemName("");
       setNewItemUnitValue("");
       setNewItemQuantity("1");
       setNewItemCategory("");
       setShowAddForm(false);
+      if (listId) {
+        const nextTotal = nextItems.reduce((s, it) => s + it.value, 0);
+        await updateShoppingList(listId, {
+          name: listName || "Lista de Compras",
+          items: nextItems,
+          totalValue: nextTotal,
+          isActive: true
+        });
+      }
     }
   };
 
-  const removeItem = (id: string) => {
-    setItems(items.filter((item) => item.id !== id));
+  const removeItem = async (id: string) => {
+    const nextItems = items.filter((item) => item.id !== id);
+    setItems(nextItems);
+    if (listId) {
+      const nextTotal = nextItems.reduce((s, it) => s + it.value, 0);
+      await updateShoppingList(listId, {
+        items: nextItems,
+        totalValue: nextTotal
+      });
+    }
   };
 
-  const toggleItem = (id: string) => {
-    setItems(
-      items.map((item) =>
-        item.id === id ? { ...item, checked: !item.checked } : item
-      )
+  const toggleItem = async (id: string) => {
+    const nextItems = items.map((item) =>
+      item.id === id ? { ...item, checked: !item.checked } : item
     );
+    setItems(nextItems);
+    if (listId) {
+      const nextTotal = nextItems.reduce((s, it) => s + it.value, 0);
+      await updateShoppingList(listId, {
+        items: nextItems,
+        totalValue: nextTotal
+      });
+    }
   };
 
   const startEdit = (item: ShoppingItem) => {
@@ -175,26 +155,32 @@ export default function ShoppingListPage() {
     setEditCategory(item.categoryId);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingItem) {
       const unitValue = parseFloat(editUnitValue) || 0;
       const quantity = parseInt(editQuantity) || 1;
       const totalValue = unitValue * quantity;
 
-      setItems(
-        items.map((item) =>
-          item.id === editingItem
-            ? {
-                ...item,
-                name: editName,
-                categoryId: editCategory,
-                unitValue,
-                quantity,
-                value: totalValue
-              }
-            : item
-        )
+      const nextItems = items.map((item) =>
+        item.id === editingItem
+          ? {
+              ...item,
+              name: editName,
+              categoryId: editCategory,
+              unitValue,
+              quantity,
+              value: totalValue
+            }
+          : item
       );
+      setItems(nextItems);
+      if (listId) {
+        const nextTotal = nextItems.reduce((s, it) => s + it.value, 0);
+        await updateShoppingList(listId, {
+          items: nextItems,
+          totalValue: nextTotal
+        });
+      }
       setEditingItem(null);
       setEditName("");
       setEditUnitValue("");
@@ -213,18 +199,18 @@ export default function ShoppingListPage() {
 
   const finishList = async () => {
     try {
-      // TODO: Implementar salvamento real no Firebase
-      const listData = {
-        name: listName || "Lista de Compras",
-        items,
-        startDate,
-        endDate: new Date(),
-        totalValue,
-        isActive: false
-      };
-
-      console.log("Lista finalizada:", listData);
-      alert(`Lista "${listData.name}" finalizada com sucesso!`);
+      if (listId) {
+        await updateShoppingList(listId, {
+          name: listName || "Lista de Compras",
+          items,
+          endDate: new Date(),
+          totalValue,
+          isActive: false
+        });
+      }
+      alert(
+        `Lista "${listName || "Lista de Compras"}" finalizada com sucesso!`
+      );
       router.push("/");
     } catch (error) {
       console.error("Erro ao finalizar lista:", error);
@@ -232,11 +218,16 @@ export default function ShoppingListPage() {
     }
   };
 
-  const cancelList = () => {
+  const cancelList = async () => {
     const confirmCancel = confirm(
       "Tem certeza que deseja cancelar esta lista? Todos os itens serão perdidos."
     );
     if (confirmCancel) {
+      if (listId && items.length === 0) {
+        try {
+          await deleteShoppingList(listId);
+        } catch {}
+      }
       router.push("/");
     }
   };
@@ -722,5 +713,13 @@ export default function ShoppingListPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ShoppingListPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <ShoppingListInner />
+    </Suspense>
   );
 }
